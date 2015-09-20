@@ -1,0 +1,84 @@
+#load the data:
+dm.data <- read.csv("C:/Users/shuvayan/Downloads/Praxis/DM/Assignment Data and Instructions/Data/A15025.csv",
+                    stringsAsFactors = T)
+
+summary(dm.data);
+
+
+attach(dm.data)
+# Load Libraries:
+library(ggplot2)
+library(dplyr)
+library(sqldf)
+
+# Plotting:
+qplot(factor(International.Plan), data=dm.data, geom="bar", fill=factor(Churn))
+qplot(factor(VMail.Plan),data = dm.data,geom = "bar",fill = factor(Churn))
+
+hist(Number.VMail.Messages)
+abline(v = mean(Number.VMail.Messages),col = "red")
+
+# See distribution of churn w.r.t State:
+library(reshape2)
+library(ggplot2)
+library(sqldf)
+dm_data <- dm.data[Churn == "Yes",]
+state_churn <- sqldf('select State,count(Churn) as Churned_Counts,
+                     Churn from dm_data group by State')
+qplot(factor(State), data=dm.data, geom="bar", fill=factor(Churn))
+
+ggplot(state_churn, aes(x = factor(State), y = Churned_Counts,fill = Churn)) +
+  geom_bar(stat = "identity")
+
+# The state WV has the highest Churn %:
+aggr_attributes_state <- aggregate(Total.Day.Minutes ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Day.Minutes)) +
+  geom_bar(stat = "identity")
+
+# See the distribution of variables w.r.t State:
+qplot(State,y = mean(Total.Day.Minutes),data = na.omit(dm.data),
+      geom = "bar",stat = "identity",fill = factor(State))
+
+qplot(State,y = mean(Total.Day.Calls),data = na.omit(dm.data),
+      geom = "bar",stat = "identity",fill = factor(Churn))
+
+logit.data <- na.omit(dm.data)
+mylogit <- glm(Churn ~ as.factor(International.Plan)+as.factor(VMail.Plan)+
+                 Total.Day.Minutes+
+                 Total.Day.Calls+
+                 Total.Day.Charge+
+                 Total.Evening.Minutes+
+                 Total.Evening.Calls+
+                 Total.Evening.Charge+
+                 Total.Night.Minutes+
+                 Total.Night.Calls+
+                 Total.Night.Charge+
+                 Total.International.Minutes+
+                 Total.International.Calls+
+                 Total.International.Charge+
+                 Customer.Service.Calls+
+                 Number.VMail.Messages,data = logit.data, family = "binomial")
+hist(mylogit$fitted.values)
+abline(v = mean(mylogit$fitted.values),col = "red")
+#prediction <- ifelse(predict(mylogit, logit.test, type='response') > 0.5,"Yes", "No")
+
+logit.data$prob <- mylogit$fitted.values
+logit.data$predictions <- NA
+logit.data[logit.data$prob >= 0.10,]$predictions <- "Yes"
+logit.data[logit.data$prob < 0.10,]$predictions <- "No"
+table(logit.data$Churn,logit.data$predictions)
+mylogit$coefficients
+
+
+table(logit.data$Churn)
+
+library(AUC)
+auc(sensitivity(logit.data$predictions,logit.data$Churn))
+auc(specificity(logit.data$predictions,logit.data$Churn))
+auc(accuracy(logit.data$predictions,logit.data$Churn))
+auc(roc(logit.data$predictions,logit.data$Churn))
+
+# Since the data is highly skewed the plots do not reveal much.
+
+
