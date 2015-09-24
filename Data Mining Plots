@@ -1,9 +1,8 @@
-#load the data:
 dm.data <- read.csv("C:/Users/shuvayan/Downloads/Praxis/DM/Assignment Data and Instructions/Data/A15025.csv",
                     stringsAsFactors = T)
-
+# We do not need the cust number in this case,so remove it.
+dm.data <- na.omit(dm.data[,-1])
 summary(dm.data);
-
 
 attach(dm.data)
 # Load Libraries:
@@ -11,74 +10,190 @@ library(ggplot2)
 library(dplyr)
 library(sqldf)
 
+
 # Plotting:
-qplot(factor(International.Plan), data=dm.data, geom="bar", fill=factor(Churn))
-qplot(factor(VMail.Plan),data = dm.data,geom = "bar",fill = factor(Churn))
-
-hist(Number.VMail.Messages)
-abline(v = mean(Number.VMail.Messages),col = "red")
-
-# See distribution of churn w.r.t State:
-library(reshape2)
-library(ggplot2)
-library(sqldf)
 dm_data <- dm.data[Churn == "Yes",]
 state_churn <- sqldf('select State,count(Churn) as Churned_Counts,
                      Churn from dm_data group by State')
 qplot(factor(State), data=dm.data, geom="bar", fill=factor(Churn))
+# The state WV has the highest proportion of Churn.
 
 ggplot(state_churn, aes(x = factor(State), y = Churned_Counts,fill = Churn)) +
   geom_bar(stat = "identity")
+# The state WV has the highest count of Churn.
 
-# The state WV has the highest Churn %:
+# Now lets the distribution of the attributes w.r.t State and see their values for the State = WV:
+# Business Problem:Since this state has the highest Churn,the mean values of the attributes may be
+# lower for WV than the other States.
+
+# Plot the average of the attributes w.r.t state:
+aggr_attributes_state <- aggregate(Customer.Service.Calls~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Customer.Service.Calls)) +
+  geom_bar(stat = "identity")
+# 1.Distribution of Day.Calls,Day.Minutes,Day.Charges w.r.t state:
 aggr_attributes_state <- aggregate(Total.Day.Minutes ~ State,
                                    data = na.omit(dm.data),FUN = mean)
+
 ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Day.Minutes)) +
   geom_bar(stat = "identity")
 
-# See the distribution of variables w.r.t State:
-qplot(State,y = mean(Total.Day.Minutes),data = na.omit(dm.data),
-      geom = "bar",stat = "identity",fill = factor(State))
 
-qplot(State,y = mean(Total.Day.Calls),data = na.omit(dm.data),
-      geom = "bar",stat = "identity",fill = factor(Churn))
+aggr_attributes_state <- aggregate(Total.Day.Charge ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Day.Charge)) +
+  geom_bar(stat = "identity")
 
+aggr_attributes_state <- aggregate(Total.Day.Calls ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Day.Calls)) +
+  geom_bar(stat = "identity")
+
+#2.Distribution of Night.Calls,Night.Minutes,Night.Charges w.r.t state:
+aggr_attributes_state <- aggregate(Total.Night.Minutes ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Night.Minutes)) +
+  geom_bar(stat = "identity")
+aggr_attributes_state <- aggregate(Total.Night.Charge ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Night.Charge)) +
+  geom_bar(stat = "identity")
+aggr_attributes_state <- aggregate(Total.Night.Calls ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Night.Calls)) +
+  geom_bar(stat = "identity")
+
+# Distribution of Evening.Calls,Evening.Minutes,Evening.Charges w.r.t state:
+aggr_attributes_state <- aggregate(Total.Evening.Minutes ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Evening.Minutes)) +
+  geom_bar(stat = "identity")
+
+aggr_attributes_state <- aggregate(Total.Evening.Charge ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Evening.Charge)) +
+  geom_bar(stat = "identity")
+
+aggr_attributes_state <- aggregate(Total.Evening.Calls ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.Evening.Calls)) +
+  geom_bar(stat = "identity")
+
+#Distribution of International.Calls,International.Minutes,International.Charges w.r.t state:
+aggr_attributes_state <- aggregate(Total.International.Minutes ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.International.Minutes)) +
+  geom_bar(stat = "identity")
+
+aggr_attributes_state <- aggregate(Total.International.Charge ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.International.Charge)) +
+  geom_bar(stat = "identity")
+
+aggr_attributes_state <- aggregate(Total.International.Calls ~ State,
+                                   data = na.omit(dm.data),FUN = mean)
+ggplot(aggr_attributes_state, aes(x = factor(State), y = Total.International.Calls)) +
+  geom_bar(stat = "identity")
+
+qplot(factor(VMail.Plan), data=dm.data, geom="bar", fill=factor(Churn),width = 0.5)
+
+# The plots above are almost similar,this can imply high correlation among the variables
+cor.data <- cor(dm.data[,3:16])
+# See if any cor value is below <0.80.
+which(cor.data < 0)
+#This gives a value of 0,which means that all the variables are highly correlated,
+library(corrplot)
+corrplot(cor.data)
+#this explains the similarity between the plots above.
+
+# Lets see the distribution of "Yes" vs "No":
+qplot(factor(Churn), data=dm.data, geom="bar", fill=factor(Churn))
+# "Yes" is only about 10% of the data,this is a very skewed sample and treating it neccessitates
+# the use of advanced techniques like boosting,undersampling or ensembles.
+
+#So lets try random forest which is an ensemble of Decision Trees:
+library(randomForest)
+set.seed(415)
+fit <- randomForest(as.factor(Churn) ~ .,
+                    data = dm.data, ntree=2000, mtry=3)
+varImpPlot(fit)
+#The randomforest model predicts all the "Yes" as "No" due to high weightage of "No".
+#The variable importance plot shows State as the most important variable in the data.
+
+# Apply logistic regression:
 logit.data <- na.omit(dm.data)
-mylogit <- glm(Churn ~ as.factor(International.Plan)+as.factor(VMail.Plan)+
-                 Total.Day.Minutes+
-                 Total.Day.Calls+
-                 Total.Day.Charge+
-                 Total.Evening.Minutes+
-                 Total.Evening.Calls+
-                 Total.Evening.Charge+
-                 Total.Night.Minutes+
-                 Total.Night.Calls+
-                 Total.Night.Charge+
-                 Total.International.Minutes+
-                 Total.International.Calls+
-                 Total.International.Charge+
-                 Customer.Service.Calls+
-                 Number.VMail.Messages,data = logit.data, family = "binomial")
-hist(mylogit$fitted.values)
-abline(v = mean(mylogit$fitted.values),col = "red")
-#prediction <- ifelse(predict(mylogit, logit.test, type='response') > 0.5,"Yes", "No")
+logit.data$International.Plan <- as.factor(logit.data$International.Plan)
+logit.data$VMail.Plan <- as.factor(logit.data$VMail.Plan)
 
-logit.data$prob <- mylogit$fitted.values
+# Clear all the plots:
+library(Epi)
+dev.off(dev.list()["RStudioGD"])
+
+# Check the ROC metrics:
+ROC(form = Churn ~ .,plot = c("sp","ROC"),
+    PV = T,MX = T,MI = T,AUC = T,data = logit.data)
+# Check the ROC metrics,with State removed:(Our guess is that State is the most important var.)
+logit.data.stateremoved <- logit.data[,-1]
+ROC(form = Churn ~ .,plot = c("sp","ROC"),
+    PV = T,MX = T,MI = T,AUC = T,data = logit.data.stateremoved[,-1])
+
+#The Area Under the Curve drops from 0.646 to 0.546 with State removed from the model.
+
+# Logit model:
+mylogit <- glm(Churn ~ .,data = logit.data, family = "binomial")
+predict.glm <- predict(mylogit,logit.data,type = "response")
+
+# The curve shows the optimal point to be at 0.101:
+logit.data$prob <- predict.glm
 logit.data$predictions <- NA
-logit.data[logit.data$prob >= 0.10,]$predictions <- "Yes"
-logit.data[logit.data$prob < 0.10,]$predictions <- "No"
+logit.data[logit.data$prob >= 0.101,]$predictions <- "Yes"
+logit.data[logit.data$prob < 0.101,]$predictions <- "No"
 table(logit.data$Churn,logit.data$predictions)
-mylogit$coefficients
 
-
-table(logit.data$Churn)
-
+# See the model performance:
 library(AUC)
 auc(sensitivity(logit.data$predictions,logit.data$Churn))
 auc(specificity(logit.data$predictions,logit.data$Churn))
-auc(accuracy(logit.data$predictions,logit.data$Churn))
 auc(roc(logit.data$predictions,logit.data$Churn))
 
-# Since the data is highly skewed the plots do not reveal much.
+# The model does well to identify True Positives but fares poorly while finding out
+# false negatives.But the roc of 0.61 is pretty good considering the skewed data.
 
+# Oversampling using ROSE:
+library(ROSE)
+train.data <- dm.data
+train.rose <- ROSE(Churn ~ ., data=train.data, seed=123)$data
+qplot(factor(Churn), data=train.rose, geom="bar", fill=factor(Churn),width = 0.5)
+# Apply logistic:
+rose.logit <- glm(Churn ~ .,data = train.rose, family = "binomial")
+ROC(form = Churn ~ .,plot = c("sp","ROC"),PV = T,MX = T,MI = T,AUC = T,data = train.rose)
 
+predict.glm <- predict(rose.logit,train.rose,type = "response")
+
+# Use the train data:
+logit.predicted <- train.rose
+logit.predicted$prob <- predict.glm
+logit.predicted$predictions <- NA
+logit.predicted[logit.predicted$prob >= 0.50,]$predictions <- "Yes"
+logit.predicted[logit.predicted$prob < 0.50,]$predictions <- "No"
+table(logit.predicted$Churn,logit.predicted$predictions)
+
+# See the model performance:
+library(AUC)
+auc(sensitivity(logit.predicted$predictions,logit.predicted$Churn))
+auc(specificity(logit.predicted$predictions,logit.predicted$Churn))
+auc(roc(logit.predicted$predictions,logit.predicted$Churn))
+
+# Even using oversampling the model could not be improved.
+
+library(randomForest)
+random.forest <- randomForest(as.factor(Churn) ~ .,train.rose,ntree = 500,importance = T)
+random.forest$confusion
+random.forest$ntree
+
+# As can be seen,there is high classification error for the class "Yes" as that is not
+# represented well enough.Even oversampling did not help.
