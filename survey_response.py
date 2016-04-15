@@ -6,21 +6,18 @@ Created on Wed Apr 13 16:49:46 2016
 """
 
 import pandas as pd
-survey = pd.read_csv("D:/NPCI_Projects/Survey Response Text Analytics/response.csv")
+survey = pd.read_csv("D:/Text Analytics/response.csv")
 
-#Using read_excel:
-#survey_xls = pd.ExcelFile("D:/NPCI_Projects/Survey Response Text Analytics/Copy_NPCI 2016 Response Datafile - 14 March.xlsx")
-#survey = survey_xls.parse(1)
 
 from bs4 import BeautifulSoup
 
 #Initialize the Beautiful Soup object on a single survey response:
 
-survey1 = BeautifulSoup(survey["EXP1"][8])
+survey1 = BeautifulSoup(survey["col1"][8])
 
 #Print the raw review and then the output of get_text
 
-print survey["EXP1"][2]
+print survey["col1"][2]
 print survey1.get_text()
 
 #Dealing with Punct,Numbers and StopWords
@@ -65,12 +62,12 @@ def survey_to_words(raw_response):
 
 #Now we need to iterate through all the responses:
 #Remove all the empty responses:
-survey = survey[pd.notnull(survey['EXP1'])]
+survey = survey[pd.notnull(survey['col1'])]
 #Initialize an empty list to hold the clean responses:
 clean_survey_responses = []
 
 #Now loop through all the responses:
-for d in survey["EXP1"]:
+for d in survey["col1"]:
     #Call the function for each response and add the result to clean_survey_response
     clean_survey_responses.append(survey_to_words(d))
     
@@ -81,7 +78,7 @@ tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
 
 term_vec = []
 
-for d in survey["EXP1"]:
+for d in survey["col1"]:
     term_vec.append(nltk.word_tokenize(d))
 
 import gensim
