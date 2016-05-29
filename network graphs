@@ -1,0 +1,2175 @@
+---
+title: "ISIS TWEET NETWORK ANALYSIS"
+author: "Georgi D. Gospodinov"
+date: "May 21, 2016"
+output: html_document
+---
+
+This document contains network analysis of the ISIS tweet dataset 
+in https://www.kaggle.com/kzaman/how-isis-uses-twitter.
+
+Model:
+
+1. The initial model is based on agrregated pairwise co-occurrence of character strings in tweet for each username, 
+Normalized by the sum of all tweet from both usernames being compared. This helps fairly compare usernames 
+exceedingly large tweet volume and others with minimal tweet activity. 
+
+2. In this initial model, we use the username as the main identifier. We ignore description, time of tweet upload,
+the number of followers, nad other data. We will incorporate in future more detailed versions of this model.
+
+3. This model generates an undirected weighted graph. Incorporating the time (tweet preceeding a given tweet)
+can provide directionality of influence). Notice that this approach will generate lots of linkage with most of it 
+likely not essential, so we filter the graph with appropriate threshold determined by examining the distribution 
+of weights and centrality of usernames.One advantage here is that the approach is not transaltion-dependent since
+we are matching strings on all tweets.
+
+The dataset includes the following: Name, Username, Description, Location, Number of followers (at the time the tweet was downloaded),
+Number of statuses by the user (when the tweet was downloaded), Date and timestamp of the tweet, the tweet itself.
+
+Goals (from Kaggle):
+1. Social Network Cluster Analysis: Who are the major players 
+in the pro-ISIS twitter network? Ideally, we would like this visualized via a 
+cluster network with the biggest influencers scaled larger than smaller influencers.
+
+2. Keyword Analysis: Which keywords derived from the name, username, description, location, 
+and tweet were the most commonly used by ISIS fanboys? Examples include: "baqiyah", "dabiq", "wilayat", "amaq"
+
+3. Data Categorization of Links: Which websites are pro-ISIS fanboys linking to? Categories include: Mainstream Media, 
+Altermedia, Jihadist Websites, Image Upload, Video Upload,
+
+4. Sentiment Analysis: Which clergy do pro-ISIS fanboys quote the most and which ones do they hate the most? 
+Search the tweet for names of prominent clergy and classify the tweet as positive, negative, or neutral 
+and if negative, include the reasons why. Examples of clergy they like the most: "Anwar Awlaki", "Ahmad Jibril", 
+"Ibn Taymiyyah", "Abdul Wahhab". Examples of clergy that they hate the most: "Hamza Yusuf", "Suhaib Webb", 
+"Yaser Qadhi", "Nouman Ali Khan", "Yaqoubi".
+
+5. Timeline View: Visualize all the tweets over a timeline and identify peak moments
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# kaggle_isis_tweet.R
+#
+# 
+# Building a network model to understand
+# ISIS TWEET from the data set 
+# in https://www.kaggle.com/kzaman/how-isis-uses-twitter
+#
+# Author: Georgi D. Gospodinov
+# Version: 0.0.1
+# Last Modified: 18/05/16
+
+
+# Models:
+# 1. The initial model is based on agrregated pairwise co-occurrence of character strings in tweet for each username, 
+# with sume of tweet of both usernames added as a denominator, thereby normalizing the difference between someone 
+# with a few tweet and someone with. We use the username as
+# the main identifier. We ignore description adn time. We include followers in the weights.
+# This model generates an undirected weighted graph. We purposely did not complicate it
+# with incorporating the time (tweet preceeding a given tweet can provide directionality of influence)
+# in order to see the overall structure of the graph. Notice that this approach 
+# will generate lots of linkage wiht most of it likely not essential, so we
+# will need to filter the graph with appropriate threshold determined by examining the distribution of weights.
+# One advantage here is that the transaltion is irrelevant, we will match strings on all tweet.
+
+# 2. Add time component, follower,
+# results in a directe grpah extension of hte initial model.
+
+# The dataset includes the following:
+# Name
+# Username
+# Description
+# Location
+# Number of followers at the time the tweet was downloaded
+# Number of statuses by the user when the tweet was downloaded
+# Date and timestamp of the tweet
+# The tweet itself
+
+  
+# Goals:
+# 1. Social Network Cluster Analysis: Who are the major players 
+# in the pro-ISIS twitter network? Ideally, we would like this visualized via a 
+# cluster network with the biggest influencers scaled larger than smaller influencers.
+#
+# 2. Keyword Analysis: Which keywords derived from the name, username, description, location, 
+# and tweet were the most commonly used by ISIS fanboys? Examples include: "baqiyah", "dabiq", "wilayat", "amaq"
+#
+# 3. Data Categorization of Links: Which websites are pro-ISIS fanboys linking to? Categories include: Mainstream Media, 
+# Altermedia, Jihadist Websites, Image Upload, Video Upload,
+#
+# 4. Sentiment Analysis: Which clergy do pro-ISIS fanboys quote the most and which ones do they hate the most? 
+# Search the tweet for names of prominent clergy and classify the tweet as positive, negative, or neutral 
+# and if negative, include the reasons why. Examples of clergy they like the most: "Anwar Awlaki", "Ahmad Jibril", 
+# "Ibn Taymiyyah", "Abdul Wahhab". Examples of clergy that they hate the most: "Hamza Yusuf", "Suhaib Webb", 
+# "Yaser Qadhi", "Nouman Ali Khan", "Yaqoubi".
+#
+# 5. Timeline View: Visualize all the tweet over a timeline and identify peak moments
+
+
+# LOAD PACKAGES:
+library(plyr)
+library(dplyr)
+library(caret)
+library(knitr)
+library(ggplot2)
+library(plotrix)
+library(igraph)
+library(RColorBrewer)
+library(xtable)
+library(wordcloud)
+
+
+# SET FILE SOURCE PATH
+DIR <- "../input/"
+
+#
+#
+#
+#
+#
+#
+#
+#
+# DEFINE FUNCTIONS
+#
+#
+#
+#
+#
+#
+#
+#
+
+readObj <- function(file_name) {
+  obj_name <- load(file_name)
+  obj <- get(obj_name)
+  return(obj)
+}
+
+writeObj <- function(obj, file_name) {
+  save(obj, file=file_name)
+  return(file_name)
+}
+
+
+# FUNCTION TO DISPLAY RELATIVE PERCENTAGES FOR HSITOGRAM COLUMNS
+histP <- function(x,breaks, ...) {
+  H <- hist(x, plot = FALSE, breaks=breaks)
+  H$density <- with(H, 100 * density* diff(breaks)[1])
+  labs <- paste(round(H$density), "%", sep="")
+  plot(H, freq = FALSE, labels = labs, ylim=c(0, 1.08*max(H$density)),...)
+}
+
+
+# FUNCTION TO DISPLAY RELATIVE PERCENTAGE VALUES GREATER THAN 0
+histP1 <- function(x,breaks, ...) {
+  H <- hist(x, plot = FALSE, breaks=breaks)
+  H$density <- with(H, 100 * density* diff(breaks)[1])
+  labs <- ifelse(round(H$density)>0,paste(round(H$density), "%", sep=""),NA)
+  plot(H, freq = FALSE, labels = labs, ylim=c(0, 1.08*max(H$density)),...)
+}
+
+
+# FUNCITON TO DISPLAY RELATIVE PERCENTAGE VALUES GREATER THAN 5, CAN BE HARDCODED
+histP2 <- function(x,breaks, ...) {
+  H <- hist(x, plot = FALSE, breaks=breaks)
+  H$density <- with(H, 100 * density* diff(breaks)[1])
+  labs <- ifelse(round(H$density)>5,paste(round(H$density), "%", sep=""),NA)
+  plot(H, freq = FALSE, labels = labs, ylim=c(0, 1.08*max(H$density)),...)
+}
+
+
+# FUNCTION THAT TRIMS LEADING WHITESPACE
+trim.leading <- function (x)  sub("^\\s+", "", x)
+
+
+# FUNCTION THAT TRIMS TRAILING WHITESPACE
+trim.trailing <- function (x) sub("\\s+$", "", x)
+
+
+# FUNCTION THAT TRIMS LEADING OR TRAILING WHITESPACE
+trim <- function (x) gsub("^\\s+|\\s+$", "", x)
+
+
+# FUNCITON TO REMOVE ALL SPACES FROM LEVEL NAMES OF A VARIABLE
+rm_space <- function(df,col_name){
+  level_names <- unique(levels(df[,which(names(df) %in% col_name)]))
+  df[,which(names(df) %in% col_name)] <- mapvalues(df[,which(names(df) %in% col_name)], 
+                                                   from = level_names,
+                                                   to = gsub("[[:space:]]","",level_names))
+  return(df)
+}
+
+
+# FUNCITON TO REMOVE ALL PUNCTUATION FROM LEVELS
+rm_punct <- function(df,col_name){
+  level_names <- unique(levels(df[,which(names(df) %in% col_name)]))
+  df[,which(names(df) %in% col_name)] <- mapvalues(df[,which(names(df) %in% col_name)],
+                                                   from = level_names,
+                                                   to = gsub("[[:punct:]]","",level_names))
+  return(df)
+} 
+
+
+# FUNCTION THAT DROPS ISOLATED VERTICES
+drop_isolated <- function(graph, vertex_colors, vertex_names) {
+  
+  # get the definitions
+  g <- graph
+  
+  # filter to degree > 0 eliminate isolated vertices
+  g_f <- delete.vertices(g,V(g)[degree(g)==0])
+  v_g_f <- setdiff(V(g),V(g)[degree(g)==0])
+  
+  # filter names and color
+  V(g_f)$name <- vertex_names[v_g_f]
+  V(g_f)$color <- vertex_colors[v_g_f]
+  return(g_f)
+}
+
+# FUNCITON THAT ADJSUTS THE VERTEX LABEL TO MULTIUPLE LINES
+sh_labels <- function(vertex_labels){
+  
+  for (k in 1:length(vertex_labels)){
+    vertex_labels[k] <- paste(strwrap(vertex_labels[k],width = 20),collapse = "\n")
+  }
+  return(vertex_labels)
+}
+
+
+# FUNCITON THAT DROPS LOOPS
+drop_loops <- function(graph, vertex_colors, vertex_names){
+  g <- simplify(graph,remove.loops=TRUE)
+  g_f <- delete.vertices(g,V(g)[degree(g)==0])
+  v_g_f <- setdiff(V(g),V(g)[degree(g)==0])
+  # filter names and color
+  V(g_f)$name <- vertex_names[v_g_f]
+  V(g_f)$color <- vertex_colors[v_g_f]
+  return(g_f)
+}
+
+
+# DEFINE EDGE-FILTRATION FUNCTION FOR THE NETWORKS
+filter <- function(cutoff,edge_matrix,vertex_colors,vertex_names, vertex_size) {
+  
+  # get the definitions
+  cut <- cutoff
+  adj <- edge_matrix
+  adj[adj<cut] <- 0
+  adj_0 <- adj
+  
+  # define the filtered graph
+  g <- graph.adjacency(adj_0,mode="undirected",weighted=TRUE)
+  V(g)$color <- vertex_colors
+  
+  # filter to degree > 0 eliminate isolated vertices
+  g_f <- delete.vertices(g,V(g)[degree(g)==0])
+  v_g_f <- setdiff(V(g),V(g)[degree(g)==0])
+  V(g_f)$name <- vertex_names[v_g_f]
+  V(g_f)$color <- vertex_colors[v_g_f]
+  V(g_f)$size <- vertex_size[v_g_f]
+  
+  return(g_f)
+}
+
+# ALTERNATE FILTRATION
+filterg <- function(cutoff,edge_matrix,vertex_colors,vertex_names) {
+  
+  # get the definitions
+  cut <- cutoff
+  adj <- edge_matrix
+  adj[adj<cut] <- 0
+  adj_0 <- adj
+  
+  # define the filtered graph
+  g <- graph.adjacency(adj_0,mode="undirected",weighted=TRUE)
+  V(g)$color <- vertex_colors
+  
+  # filter to degree > 0 eliminate isolated vertices
+  g_f <- delete.vertices(g,V(g)[degree(g)==0])
+  v_g_f <- setdiff(V(g),V(g)[degree(g)==0])
+  V(g_f)$name <- vertex_names[v_g_f]
+  V(g_f)$color <- vertex_colors[v_g_f]
+  V(g_f)$size <- sqrt(degree(g_f))
+  
+  return(g_f)
+}
+
+
+
+
+# DEFINE DEGREE FILTRATION FUNCTION FOR THE NETWORKS
+filter_deg <- function(cutoff,edge_matrix,vertex_colors,vertex_names) {
+  
+  # get the definitions
+  cut <- cutoff
+  adj <- edge_matrix
+  
+  # set the cut-off
+  adj_0 <- adj
+  adj_0[adj_0>0] <- 1
+  for (i in 1:dim(adj)[1]){
+    if (sum(adj_0[,i])<cutoff){
+      adj <- adj[,-i]
+      adj <- adj[-i,]
+    }
+  }
+  
+  # define the filtered graph
+  g <- graph.adjacency(adj,mode="undirected",weighted=TRUE)
+  V(g)$color <- vertex_color
+  
+  # filter to degree > 0 eliminate isolated vertices
+  g_f <- delete.vertices(g,V(g)[degree(g)==0])
+  v_g_f <- setdiff(V(g),V(g)[degree(g)==0])
+  V(g_f)$name <- vertex_names[v_g_f]
+  
+  # color the filtered graph with sources and endpoints for the directed edges
+  V(g_f)$color <- V(g)$colors[v_g_f]
+  
+  
+  return(g_f)
+}
+
+# DEFINE WEIGHTED DEGREE FILTRATION USING DEGREE
+
+# DEFINE A FILTRATION OF GRAPH TO DISPLAY LARGEST CLUSTER (GIANT COMPONENT)
+giant_comp <- function(graph, vertex_colors, vertex_names, vertex_size){
+  
+  # get the definitions
+  g <- graph
+  
+  # identify the largest cluster
+  clusters <- as.data.frame(table(clusters(g)$membership))
+  ind <- as.numeric(clusters[which(clusters$Freq==max(clusters$Freq)),]$Var1)
+  vertices <- which(clusters(g)$membership==ind)
+  vertices_complement <- which(clusters(g)$membership!=ind)
+  
+  # filter to only include the giant component
+  g_f <- delete.vertices(g,V(g)[which(V(g) %in% vertices_complement)])
+  v_g_f <- setdiff(V(g),V(g)[which(V(g) %in% vertices_complement)])
+  V(g_f)$name <- vertex_names[v_g_f]
+  
+  # color the filtered graph with sources and endpoints for the directed edges
+  V(g_f)$color <- vertex_colors[v_g_f]
+  V(g_f)$size <- vertex_size[v_g_f]
+  
+  return(g_f)
+}
+
+
+# BUILD HISTOGRAM PLOTS BY 2-CLUSTERS BY VARIABLE
+histogram2 <- function(df1,df2,var_name,breaks){
+  # extract data
+  data1 <- df1[[var_name]]
+  data2 <- df2[[var_name]]
+  data1 <- (data1-min(data1))/max(data1-min(data1))
+  data2 <- (data2-min(data2))/max(data2-min(data2))
+  cnt1 <- hist(data1, breaks = breaks, plot = FALSE)$counts
+  brk1 <- hist(data1, breaks = breaks, plot = FALSE)$breaks
+  cnt2 <- hist(data2, breaks = breaks, plot = FALSE)$counts
+  brk2 <- hist(data2, breaks = breaks, plot = FALSE)$breaks
+  pct1 <- 100*cnt1/sum(cnt1)
+  pct2 <- 100*cnt2/sum(cnt2)
+  bardata <- cbind(pct1,pct2)
+  barplot(t(bardata), 
+          beside = T,
+          xlab = paste("Index For",var_name),
+          ylab = "Relative Percentages",
+          main = paste("Distribution Comparison For",var_name),
+          col = c("black","red"))
+  axis(1, 
+       at = 3*(1:length(brk1)-1)-1,
+       labels = NA,
+       cex.axis = 1,
+       las = 1)
+  legend("topright",
+         legend = c("Cluster 1","Cluster 2"),
+         fill = c("black","red"),
+         bty = "n",
+         cex = 1.25)
+}
+
+
+# BUILD HISTOGRAM PLOTS BY 3-CLUSTERS BY VARIABLE
+histogram3 <- function(df1,df2,df3,var_name,breaks){
+  # extract data
+  data1 <- df1[[var_name]]
+  data2 <- df2[[var_name]]
+  data3 <- df3[[var_name]]
+  data1 <- (data1-min(data1))/max(data1-min(data1))
+  data2 <- (data2-min(data2))/max(data2-min(data2))
+  data3 <- (data3-min(data3))/max(data3-min(data3))
+  cnt1 <- hist(data1, breaks = breaks, plot = FALSE)$counts
+  brk1 <- hist(data1, breaks = breaks, plot = FALSE)$breaks
+  cnt2 <- hist(data2, breaks = breaks, plot = FALSE)$counts
+  brk2 <- hist(data2, breaks = breaks, plot = FALSE)$breaks
+  cnt3 <- hist(data3, breaks = breaks, plot = FALSE)$counts
+  brk3 <- hist(data3, breaks = breaks, plot = FALSE)$breaks
+  pct1 <- 100*cnt1/sum(cnt1)
+  pct2 <- 100*cnt2/sum(cnt2)
+  pct3 <- 100*cnt3/sum(cnt3)
+  bardata <- cbind(pct1,pct2,pct3)
+  barplot(t(bardata), 
+          beside = T,
+          xlab = paste("Index For",var_name),
+          ylab = "Relative Percentages",
+          main = paste("Distribution Comparison For",var_name),
+          col = c("black","red","SkyBlue2"))
+  axis(1, 
+       at = 4*(1:(length(brk1)-1))-2,
+       labels = NA,
+       cex.axis = 1,
+       las = 1)
+  legend("topright",
+         legend = c("Cluster 1","Cluster 2","Cluster 3"),
+         fill = c("black","red","SkyBlue2"),
+         bty = "n",
+         cex = 1.25)
+}
+# BUILD THE CROSS PRODUCT OF TWO VECTORS OF STRINGS
+string_prod <- function(v_1,v_2){
+  l_1 <- length(v_1)
+  l_2 <- length(v_2)
+  intersections <- 0
+  for (i in 1:l_1){
+    for (j in 1:l_2){
+      idx <- as.numeric(nchar(Reduce(intersect, strsplit(c(v_1[i],v_2[j])," "))))
+      intersections <- intersections + length(which(idx>2))
+    }
+  }
+  return(intersections/(l_1+l_2))
+}
+
+
+# BUILD THE CROSS PRODUCT OF TWO VECTORS FO STRINGS
+string_prod2 <- function(v_1,v_2){
+  l_1 <- length(v_1)
+  l_2 <- length(v_2)
+  v_1 <- v_1[1:ceiling(l_1/2)]
+  v_2 <- v_2[1:ceiling(l_2/2)]
+  l_1 <- length(v_1)
+  l_2 <- length(v_2)
+  intersections <- 0
+  for (i in 1:l_1){
+    for (j in 1:l_2){
+      idx <- as.numeric(nchar(Reduce(intersect, strsplit(c(v_1[i],v_2[j])," "))))
+      intersections <- intersections + length(which(idx>2))
+    }
+  }
+  return(intersections/(l_1+l_2))
+}
+
+# BUILD THE CROSS PRODUCT OF TWO VECTORS OF STRINGS
+string_prod3 <- function(v_1,v_2){
+  l_1 <- length(v_1)
+  l_2 <- length(v_2)
+  v_1 <- v_1[1:ceiling(l_1/5)]
+  v_2 <- v_2[1:ceiling(l_2/5)]
+  l_1 <- length(v_1)
+  l_2 <- length(v_2)
+  intersections <- 0
+  for (i in 1:l_1){
+    for (j in 1:l_2){
+      idx <- as.numeric(nchar(Reduce(intersect, strsplit(c(v_1[i],v_2[j])," "))))
+      intersections <- intersections + length(which(idx>2))
+    }
+  }
+  return(intersections/(l_1+l_2))
+}
+
+```
+
+INITIAL ANALYSIS AND FILTRATION
+
+We notice a consistent group of usernames at the bottom of the weighted
+degree distribution and the centrality measures. We exclude these usernames from
+this analysis as their contribution to the weighted links is not essential. This
+allows us to avoid challenges with the 20-min runtime for the script.
+
+Below the plots, we displayt eh top usernames according to weighted degree
+and centrality (eigenvector centrality) to support the apporach of filtering the 
+msot significant usernames for the purposes of this initial model.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+
+
+original_strength <- 
+c(0.9904738,12.3575544,23.4681343,35.0953053,48.0179454,62.0674757,62.5233210,
+66.3242180,104.0418889,121.9858117,123.9776245,144.4441551,148.6721224,156.5318962,
+157.5216919,164.8808798,165.2760248,173.8492335,176.6324903,202.5932973,203.2254040,
+221.4111018,256.5400018,267.0546358,297.9529943,305.6897837,353.6806323,365.0043481,
+365.9042293,387.8412855,434.3542661,441.5840349,443.1897903,447.9855380,487.4277325,
+503.2377901,507.4807713,515.8565487,525.1917760,547.6639661,558.4441709,569.0683591,
+578.6772563,586.3827423,602.7144841,606.9231681,628.8786052,655.6668449,666.3955170,
+668.7011564,727.3085914,840.0352163,881.1678825,886.0922883,907.2995940,910.7154130,
+915.4222957,915.8068749,921.1639273,922.7209841,924.4531957,940.5770894,942.7786430,
+967.1479914,971.5537567,973.3114389,976.5147426,983.4954284,994.2333812,998.7836156,
+1065.1724136,1074.5849242,1089.6368287,1097.0435011,1180.9580626,1190.5830723,1198.2002770,
+1200.3930144,1203.4848132,1217.4282987,1226.2465493,1266.9697214,1270.8732043,1274.3240623,
+1307.6539564,1346.4225316,1375.4247255,1394.6714687,1401.8400098,1404.9945232,1435.1029834,
+1471.4479593,1472.1624143,1532.6280454,1533.9865181,1554.2588360,1628.0997471,1655.6893801,
+1722.0936283,1737.8901828,1773.8341840,1785.6824118,1804.5779628,1838.7083843,1867.4322382,
+1927.1166896,2041.8654279,2189.6884663,2194.6986166,2378.7131414,2592.1969441,3422.7290972)
+
+par(mfrow=c(2,2))
+
+# DEGREE AND WEIGHTED DISTRIBUTION:
+# CENTRALITY MEASURES:
+# BETWEENNESS CENTRALITY AND EDGE - BETWENNESS
+# CENTRALITY ARE BOTH VERY RIGID
+# MEASURES: ONLY THE TOP FEW USERNAMES
+# STAND OUT AS OUTLIERS FOR BOTH MEASURES, 
+# THE REST ARE NEARLY EQUAL.
+# CLOSENESS CENTRALITY ON THE OTEHR HAND IS VERY
+# VERY STRONG DIFFERENTIATOR
+# EIGENVECTOR CENTRALITY AS WELL
+# AND WE ADDED LOCAL CLUSTERING
+# COEFFICIENT AS WELL
+
+plot(original_strength,
+     pch = 20,
+     col = "blue",
+     xlab = "USERNAME INDEX",
+     ylab = "DEGREE VALUE",
+     main = "WEIGHTED DEGREE DISTRIBUTION FOR THE
+WEIGHTED ISIS TWEET ASSOCIATION NETWORK")
+text(60,3100,"WEIGHTED DEGREE:", col = "blue", cex = 1.5)
+text(55,2600,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    1.0   365.7   913.0   901.8  1283.0  3423.0 ", col = "blue", cex = 1.2)
+
+original_closeness <- 
+c(0.01767934,0.02588829,0.03207957,0.03234973,0.03261285,0.03458106,0.03472337,0.03526571,0.03578827,
+0.03611123,0.03724866,0.03897459,0.03980447,0.04054414,0.04089955,0.04194393,0.04489732,0.04586895,
+0.04787557,0.04847840,0.04922543,0.05055683,0.05208358,0.05212209,0.05352234,0.05369759,0.05447417,
+0.05466530,0.05567175,0.05567175,0.05651322,0.05671017,0.05739602,0.05881051,0.05902987,0.05947319,
+0.06094708,0.06225086,0.06799450,0.06938526,0.07199286,0.07207961,0.07214536,0.07214536,0.07233165,
+0.07258853,0.07340630,0.07608406,0.07626727,0.07640005,0.07704608,0.07906223,0.08049818,0.08137043,
+0.08177038,0.08183749,0.08410332,0.08433051,0.08477531,0.08499306,0.08526509,0.08542462,0.08679777,
+0.08733586,0.08787703,0.08856747,0.08902272,0.09015325,0.09030176,0.09270934,0.09270934,0.09285794,
+0.09324205,0.09375081,0.09477568,0.09712317,0.09781156,0.09811327,0.09865335,0.09889224,0.09914251,
+0.09942227,0.10008240,0.10197830,0.10235445,0.10300816,0.10300816,0.10322869,0.10322869,0.10340803,
+0.10383465,0.10455459,0.10573846,0.10651717,0.10663440,0.10674106,0.10717913,0.10718645,0.10747622,
+0.10766792,0.10877085,0.10994280,0.11003678,0.11109680,0.11140149,0.11160770,0.11188610,0.11238695,
+0.11367277,0.11531279,0.11588107,0.11597148)
+
+plot(original_closeness,
+     pch = 20,
+     col = "darkblue",
+     xlab = "USERNAME INDEX",
+     ylab = "CLOSENESS CENTRALITY VALUE",
+     main = "CLOSENESS CENTRALITY DISTRIBUTION FOR THE
+WEIGHTED ISIS TWEET ASSOCIATION NETWORK")
+text(60,0.04,"CLOSENESS CENTRALITY:", col = "darkblue", cex = 1.5)
+text(60,0.03,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   0.02    0.06    0.08    0.08    0.10    0.12 ", col = "darkblue", cex = 1.2)
+
+original_eigenvector <-
+c(0.0001767995,0.0019825228,0.0045183978,0.0071594835,0.0097226954,0.0127836420,0.0132332031,
+0.0132925115,0.0215211109,0.0254276181,0.0254755365,0.0317287599,0.0320205330,0.0349370988,
+0.0352741539,0.0352787718,0.0360129993,0.0378805298,0.0391135895,0.0457320308,0.0458201089,
+0.0527328203,0.0598402781,0.0602159397,0.0652432287,0.0708051075,0.0777152476,0.0808893594,
+0.0864766352,0.0871186206,0.0962299211,0.0974055499,0.1085706585,0.1091700257,0.1112580577,
+0.1128971259,0.1165855162,0.1206584300,0.1252178559,0.1277693576,0.1337586386,0.1341561026,
+0.1364026035,0.1404629298,0.1417365880,0.1472912024,0.1529494267,0.1599740364,0.1662674461,
+0.1679376525,0.1759322438,0.2046989594,0.2093758937,0.2123224317,0.2198553514,0.2230312078,
+0.2257070904,0.2268578932,0.2295689052,0.2325029461,0.2338831318,0.2340593166,0.2355332263,
+0.2373222748,0.2385913961,0.2409122941,0.2437542157,0.2467437915,0.2502445930,0.2521238472,
+0.2696009265,0.2719857880,0.2734960966,0.2781363585,0.2937551836,0.2949083171,0.3003562543,
+0.3081158149,0.3131484578,0.3142685972,0.3179355147,0.3185941321,0.3296028642,0.3331683069,
+0.3409724005,0.3480996753,0.3542587835,0.3552802657,0.3628336227,0.3639967024,0.3666302335,
+0.4022809523,0.4082948618,0.4332235132,0.4442421003,0.4467350099,0.4542120117,0.4803128606,
+0.4866219339,0.4938945026,0.4978382538,0.5002049866,0.5015029935,0.5054411724,0.5088445187,
+0.5770404349,0.6057613686,0.6195199011,0.6251349385,0.7592986614,0.8067128024,1.0000000000)
+
+plot(original_eigenvector,
+     pch = 20,
+     col = "purple",
+     xlab = "USERNAME INDEX",
+     ylab = "EIGENVECTOR CENTRALITY VALUE",
+     main = "EIGENVECTOR CENTRALITY DISTRIBUTION FOR THE
+WEIGHTED ISIS TWEET ASSOCIATION NETWORK")
+text(60,0.9,"EIGENVECTOR CENTRALITY:", col = "purple", cex = 1.5)
+text(56,0.7,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ 0.0002  0.0851  0.2244  0.2375  0.3351  1.0000", col = "purple", cex = 1.2)
+
+
+
+original_clustering <-
+c(0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,
+0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,
+0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,
+0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,
+0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,0.9862408,
+0.9862408,0.9883236,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,
+0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,
+0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,
+0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,0.9958299,
+0.9958299,0.9958299,0.9958299,0.9958299,0.9967720,0.9967720,0.9971118,0.9974039,0.9979613,0.9979613,
+0.9979613,0.9979613,0.9979613,0.9987885,0.9991346,0.9991346,0.9992947,0.9998133,0.9998237,1.0000000,
+1.0000000,1.0000000)
+
+plot(original_clustering,
+     pch = 20,
+     col = "brown",
+     xlab = "USERNAME INDEX",
+     ylab = "CLUSTERING COEFFICIENT VALUE",
+     main = "CLUSTERING COEFFICIENT DISTRIBUTION FOR THE
+WEIGHTED ISIS TWEET ASSOCIATION NETWORK")
+text(60,0.994,"CLUSTERING COEFFICIENT:", col = "brown", cex = 1.5)
+text(56,0.992,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   0.99    0.99    1.00    0.99    1.00    1.00", col = "brown", cex = 1.2)
+
+
+
+# TOP USERNAMES BY GRAPH STRENGTH
+top_gs <- c("WarReporter1","mobi_ayubi","RamiAlLolah","Fidaee_Fulaani","pleaoftheummah","_IshfaqAhmad",
+            "warrnews"," MilkSheikh2","IbnKashmir_","murasil1"," __alfresco__","ro34th","melvynlion",
+            "Nidalgazaui","warreporter2","AsimAbuMerjem","NaseemAhmed50","Uncle_SamCoco","MaghrebiQM",
+            "MaghrebiHD","ismailmahsud","klakishinki","maisaraghereeb","abuhumayra4","wayf44rerr",
+            "lNSlDEWAR","moustiklash","safiyaimback","CXaafada2","Freedom_speech2")
+
+top_cls <- c("abubakerdimshqi","al_nusra","abdlrhmn15","WhiteCat_7","Abu_Azzzam25","Bajwa47online",
+             "maisaraghereeb","warreporter2","CXaafada2","YazeedDhardaa25","AsimAbuMerjem","pleaoftheummah",
+             "NaseemAhmed50","MaghrabiArabi","BaqiyaIs","darulhijrateyni","BilalIbnRabah1","1Dawlah_III",
+             "06230550_IS","abuhumayra4","QassamiMarwan","Al_Battar_Engl","Alwala_bara","ismailmahsud",
+             "Witness_alHaqq","AbuNaseeha_03","mobi_ayubi","RamiAlLolah","JoinISNation102","warrnews")
+
+top_ev <- c("WarReporter1","mobi_ayubi","RamiAlLolah","pleaoftheummah","warrnews","_IshfaqAhmad","Fidaee_Fulaani",
+            "AsimAbuMerjem","warreporter2","NaseemAhmed50","Nidalgazaui","IbnKashmir_","Uncle_SamCoco","MilkSheikh2",
+            "__alfresco__","ro34th","melvynlion","murasil1","ismailmahsud","maisaraghereeb","wayf44rerr",
+            "MaghrebiQM","MaghrabiArabi","CXaafada2","MaghrebiHD","Bajwa47online","lNSlDEWAR","abuhumayra4",
+            "klakishinki","safiyaimback")
+
+top_tr <-c("fahadslay614","abuayisha102","Abdul__05","newerajihadi61","````````````````````","ks48a174031",
+           "DabiqsweetsMan","Afriqqiya_252","almuhajirun9","c0n0fj1had4_","Abu_Ibn_Taha","___KU217_y",
+           "Suspend_Me_fags","wayff44rer","bintraveller","Mosul_05","dieinurage29__7","k_kid04","GunsandCoffee70",
+           "AbuLaythAlHindi","abubakerdimshqi","BaqiyaIs","al_nusra","abuhanzalah10","abdlrhmn15","CXaafada2",
+           "Alwala_bara","QassamiMarwan","Witness_alHaqq","Fidaee_Fulaani")
+
+bottom_gs <- c("Abdul__05","abuayisha102","````````````````````","fahadslay614","almuhajirun9","ks48a174031",
+               "bintraveller","Afriqqiya_252","newerajihadi61","baaqiya_01","dieinurage29__7","ALK___226",
+               "Dieinurage308","Suspend_Me_fags","DabiqsweetsMan","AbuLaythAlHindi","Mosul_05","___KU217_y",
+               "Abu_Ibn_Taha","ansarakhilafa","abuayisha108","432Mryam","squadsquaaaaad","GunsandCoffee70",
+               "wayff44rer","k_kid04","abuhanzalah10","AbdusMujahid149","kIakishini5","JohnsonsBot","MaghrebiQ",
+               "mustaklash","saifulakhir","nvor85j","mustafaklash56","Baqiyah_Khilafa","c0n0fj1had4_","abutariq041",
+               "ManKhalfahum","BilalIbnRabah1","JoinISNation102","alamreeki4","darulhijrateyni","04_8_1437",
+               "grezz10","MhzBnt","Jazrawi_Joulan","wayyf44rer","Alwala_bara","BaqiyaIs","YazeedDhardaa25",
+               "EPlC24","abubakerdimshqi","sonofshishan","AbuNaseeha_03","emran_getu","st3erer","Mountainjjoool",
+               "Jazrawi_Saraqib","WhiteCat_7","06230550_IS","Al_Battar_Engl","QassamiMarwan","Abu_Azzzam25",
+               "al_nusra","freelance_112","Battar_English","DawlaWitness11","abdlrhmn15","al_zaishan10")
+
+bottom_cls <- c("abutariq041","saifulakhir","nvor85j","Mountainjjoool","04_8_1437","freelance_112","AbuMusab_110",
+                "st3erer","__alfresco__","murasil1","Jazrawi_Joulan","btt_ar","alamreeki4","Baqiyah_Khilafa",
+                "ro34th","Nidalgazaui","al_zaishan10","melvynlion","war_analysis","MaghrebiWM","Jazrawi_Saraqib",
+                "wayyf44rer","wayf44rerr","DawlaWitness11","emran_getu","safiyaimback","sonofshishan","MaghrebiHD",
+                "abutariq040","IbnKashmir_","mustafaklash56","thefIamesofhaqq","Freedom_speech2","ManKhalfahum",
+                "MilkSheikh2","EPlC24","klakishinki","moustiklash","MhzBnt","WarReporter1","lNSlDEWAR","grezz10",
+                "FidaeeFulaani","1515Ummah","MaghrebiQM","Battar_English","Fidaee_Fulaani","Uncle_SamCoco",
+                "_IshfaqAhmad","warrnews","JoinISNation102","RamiAlLolah","mobi_ayubi","AbuNaseeha_03","Witness_alHaqq",
+                "ismailmahsud","Alwala_bara","Al_Battar_Engl","QassamiMarwan","abuhumayra4","06230550_IS","1Dawlah_III",
+                "BilalIbnRabah1","darulhijrateyni","BaqiyaIs","MaghrabiArabi","NaseemAhmed50","pleaoftheummah",
+                "AsimAbuMerjem","YazeedDhardaa25")
+
+bottom_ev <- c("mustafaklash56","saifulakhir","ManKhalfahum","abutariq041","nvor85j","BilalIbnRabah1","Baqiyah_Khilafa",
+               "04_8_1437","JoinISNation102","darulhijrateyni","grezz10","alamreeki4","MhzBnt","Jazrawi_Joulan",
+               "wayyf44rer","Alwala_bara","BaqiyaIs","YazeedDhardaa25","sonofshishan","EPlC24","emran_getu","06230550_IS",
+               "Mountainjjoool","AbuNaseeha_03","st3erer","Al_Battar_Engl","Jazrawi_Saraqib","freelance_112",
+               "QassamiMarwan","Battar_English","DawlaWitness11","al_zaishan10","abubakerdimshqi","al_nusra","WhiteCat_7",
+               "war_analysis","Witness_alHaqq","Abu_Azzzam25","AbuMusab_110","1515Ummah","abdlrhmn15","abutariq040",
+               "1Dawlah_III","thefIamesofhaqq","btt_ar","FidaeeFulaani","MaghrebiWM","Freedom_speech2","moustiklash",
+               "safiyaimback","klakishinki","abuhumayra4","lNSlDEWAR","Bajwa47online","MaghrebiHD","CXaafada2",
+               "MaghrabiArabi","MaghrebiQM","wayf44rerr","maisaraghereeb","ismailmahsud","murasil1","melvynlion","ro34th",
+               "__alfresco__","MilkSheikh2","Uncle_SamCoco","IbnKashmir_","Nidalgazaui","NaseemAhmed50")
+
+bottom_tr <- c("YazeedDhardaa25","WhiteCat_7","warreporter2","Bajwa47online","pleaoftheummah","AsimAbuMerjem",
+               "NaseemAhmed50","MaghrabiArabi","BilalIbnRabah1","maisaraghereeb","Abu_Azzzam25","darulhijrateyni",
+               "JoinISNation102","1Dawlah_III","abuhumayra4","ismailmahsud","06230550_IS","RamiAlLolah","mobi_ayubi",
+               "Al_Battar_Engl","warrnews","AbuNaseeha_03","ansarakhilafa","_IshfaqAhmad","Uncle_SamCoco",
+               "MaghrebiQM","AbdusMujahid149","MhzBnt","FidaeeFulaani","WarReporter1","baaqiya_01","lNSlDEWAR",
+               "moustiklash","Freedom_speech2","IbnKashmir_","MaghrebiHD","Jazrawi_Joulan","wayyf44rer",
+               "squadsquaaaaad","wayf44rerr","MaghrebiWM","war_analysis","melvynlion","Nidalgazaui","al_zaishan10",
+               "ro34th","murasil1","__alfresco__","AbuMusab_110","freelance_112","nvor85j","04_8_1437","GunsandCoffee70",
+               "AbuLaythAlHindi","abubakerdimshqi","BaqiyaIs","al_nusra","abuhanzalah10","abdlrhmn15","CXaafada2",
+               "Alwala_bara","QassamiMarwan","Witness_alHaqq","Fidaee_Fulaani","Battar_English","1515Ummah","mustaklash",
+               "ManKhalfahum","grezz10","mustafaklash56")
+```
+
+```{r table1, results = "asis", echo=FALSE, message = FALSE}
+tops <- cbind.data.frame(top_gs, top_ev)
+colnames(tops) <- c("weighted_degree", "centrality") 
+print(xtable(tops[1:10,]), type = "html", include.rownames = FALSE)
+cat(" ")
+```
+
+
+INJESTING THE DATA AND TRANSFORMATIONS
+
+We transform smot of the columns as character, and further truncate
+the usernames to have at most 20 characters in length in order to 
+eliminate certain anomalous usernames.
+
+GENERATING THE ADJACENCY MATRIX
+
+This is the most computation-expensive aprt of the model, as we do pairwise
+tweet comparison for each username and all the tweets. This is a
+highly parallelizable process so  future solutions can handle millions
+of usernames with billions of tweet in the whole set.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# INJEST THE DATA
+data <- read.csv(paste0(DIR,"tweets.csv"), header = TRUE, sep =",")
+# colnames(data)
+
+# SUMMARY OF THE DATA
+# summary(data)
+```
+
+Here is a sample of a few usernames and some of their (truncated) tweet.
+
+```{r table2, results = "asis", echo=FALSE, message = FALSE}
+sample_tweet <- cbind.data.frame(data$username[360:390],strtrim(data$tweet[360:390],100))
+colnames(sample_tweet) <- c("username","tweet")
+print(xtable(sample_tweet),type='html',include.rownames = FALSE)
+
+```
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# WE WILL BUILD OUR ANALYSIS BASED ON USERNAMES
+# THAT CAN BE MODIFIED LATER
+# THE PROCESS IS VERY GRANULAR WITH LOTS TO BE IMPROVED 
+# IF WE SCALE IT TO MILLIONS OF USERNAMES
+# STILL THE BASIC APPROACH APPLIES: COMPUTE PAIRWISE ASSOCIATION
+# BUT THIS TIME DOSCARD THOSE THAT DO NOT GET TO THE THRESHOLD
+# WE DETERMINE HERE
+# SO THE RESULTING GRAPH OBJECT OR EDGE LIST 
+# CONTAINS ONLY THE SIGNIFICANT ASSOCIATIONS
+
+# WE BUILD THE WEIGHTS AS THE NUMBER OF STRINGS THAT ARE COMMON TO
+# TWEET FROM EACH USERNAME
+# AND NORMALIZE BY THE SUM OF TOTAL TWEET FROM BOTH
+# AS A WAY IOF ELIMINATING CASES WHERE THERE ARE A HUGE AMOUNT OF
+# TWEET AND THE INTERSECTIONS ARE ON COMMON WORDS
+# WE ALSO DEMAND THAT INTERSECTIONS ON SHORT STRINGS OF < 3
+# CHARACTERS TO BE DISCREGARDED
+
+# I DID NOT PARALLELIZE THE ALGORITHM BUT THAT
+# CAN EASILY BE DONE
+# ALSO THE USERNAME-TO-USERNAME TWEET LEVEL
+# COMPARISON DOES NOT NEED TO BE DONE BY COMPARING TWEET IN PAIRS,
+# TWEET CAN BE TURNED INTO LONG STRINGS
+# BUT THAT WILL CHALLENGE BRINIGN TIME INTO THE PICTURE
+
+# ALSO, IN THIS FIRST VERSION WE ARE NOT TAKING THE LENGTH OF THE 
+# SHARED STRING PIECES INTO ACCOUNT, BUT THAT COULD ADD WEIGHTS
+
+# BUILD THE ADJACENCY MATRIX:
+data <- data[data$username %in% c("WarReporter1","mobi_ayubi","RamiAlLolah","Fidaee_Fulaani",
+                                  "pleaoftheummah","_IshfaqAhmad","warrnews","MilkSheikh2",
+                                  "IbnKashmir_","murasil1","__alfresco__","ro34th","melvynlion",
+                                  "Nidalgazaui","warreporter2","AsimAbuMerjem","NaseemAhmed50",
+                                  "Uncle_SamCoco","MaghrebiQM","MaghrebiHD","ismailmahsud",
+                                  "klakishinki","maisaraghereeb","abuhumayra4","wayf44rerr",
+                                  "lNSlDEWAR","moustiklash","safiyaimback","CXaafada2",
+                                  "Freedom_speech2","MaghrebiWM","Bajwa47online","FidaeeFulaani",
+                                  "MaghrabiArabi","btt_ar","thefIamesofhaqq1Dawlah_III",
+                                  "abutariq040","1515Ummah","AbuMusab_110","Witness_alHaqq",
+                                  "war_analysis","al_zaishan10","abdlrhmn15","DawlaWitness11",
+                                  "Battar_English","freelance_112","al_nusra","Abu_Azzzam25",
+                                  "QassamiMarwan","Al_Battar_Engl","06230550_IS","WhiteCat_7",
+                                  "Jazrawi_SaraqibMountainjjoool","st3erer","emran_getu","AbuNaseeha_03"),]
+# TRANSFORM NAME, USERNAME, DESCRIPTION AND TWEET TO CHARACTER
+data$name <- as.character(data$name)
+data$username <- as.character(data$username)
+data$description <- as.character(data$description)
+data$tweet <- as.character(data$tweet)
+
+# WHILE WE DO NOT RECOMMEND REMOVING SYMBOLS FROM 
+# NAMES AND USERNAMES, WE WILL TRUNCATE THOSE 
+# TO BE NO LONGER THAN 20 CHARACTERS LONG
+data$name <- strtrim(data$name,20)
+data$username <- strtrim(data$username,20)
+data$description <- strtrim(data$description,20)
+
+# GET THE UNIQUE NAMES AND USERNAMES
+# NOTE THAT THERE ARE NAMES WITH MULTIPLE USERNAMES
+# AND MULTIPLE NAMES CAN HAVE A SINGLE USERNAME
+usernames <- unique(data$username)
+names <- unique(data$name)
+# ids <- unique(data[,c("name","username")])
+data <- data[,c("username","tweet")]
+edgem <- matrix(0,nrow = length(usernames), ncol = length(usernames))
+for (i in 1:(length(usernames)-1)){
+  for (j in (i+1):length(usernames)){
+    tweet_i <- data[data[,1] %in% usernames[i],2]
+    tweet_j <- data[data[,1] %in% usernames[j],2]
+    edgem[i,j] <- string_prod3(tweet_i,tweet_j)
+  }
+}
+
+# BUILD THE SYMMETRIC TABLE
+for (i in 1:(length(usernames)-1)){
+  for (j in (i+1):length(usernames)){
+    edgem[j,i] <- edgem[i,j]
+  }
+}
+
+# SET THE MAIN DIAGONAL TO 0, NO SELF-INTERSECTIONS.
+for (k in 1:length(usernames)){
+  edgem[k,k] <- 0
+}
+```
+
+
+We create the graph object and generate some basic statistics. 
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=8,dpi=150,out.width='1200px',out.height='800px'}
+# BUILD THE ISIS TWEET NETWORK
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+# COLOR VERTICES (GREEN)
+# NODE SIZE TRNSFORMATIONS: sqrt(deg(g)) OR log(degree(g))
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+
+# GET SORTED USERNAMES ACCORDING TO 
+# WEIGHTED DEGREE
+# wdeg <- as.data.frame(graph.strength(g))
+# wdeg_lbls <- rownames(wdeg)
+# wdeg <- wdeg[order(wdeg,decreasing = TRUE),]
+```
+
+
+BASIC ISIS TWEET NETWORK STATISTICS
+
+
+NUMBER OF NODES: This is the number of usernames in this tweet network.
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE}
+vcount(g)
+```
+NUMBER OF EDGES: This is the number of username-to-username connections in this tweet network. Each connection between usernames indicates an aggregate number of shared strings (words) between suernames using pairwise tweet-to-tweet comparisons. That number is normalized by the number of tweet and filetered to ignore strings of length < 3.
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE}
+length(E(g))
+```
+DISTRIBUTION OF NODE DEGREES: The degree indicates the number of distinct usernames connected to a given username. This is the distribution of node degress for this network.
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE}
+summary(degree(g))
+```
+DISTRIBUTION OF WEIGHTED NODE DEGREES: The weighted degree indicates the weighted sum of distinct connections to a given username. This is the distribution of weighted node degress for this network.
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE}
+summary(graph.strength(g))
+```
+
+DISTRIBUTION OF EDGE WEIGHTS: We look at the distribution of weighted edges across the entire network.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=8,dpi=150,out.width='1200px',out.height='800px'}
+
+# WE REMOVE THE TOP 1% EDGE WEIGHTS
+# AND NOTICE A NATURAL BREAK IN
+# THE EDGE WEIGHTS DISTRIBUTION:
+# EDGE WEIGHTS  OF WEIGHT SMALLER THAN APPROXIMATELY 4
+# CARRY NO SIGNIFICANT DIFFERNETIATING CAPABILITIES
+# AS THEY ARE NETWORK-WIDE AND SHOW A BASELINE
+# THRESHOLD OF ABOUT 70$ QUANTILE FOR EDGEM
+# AS CAN BE SEEN WITH FURTHER 
+# FILTRATION OF TOP EDGE WEIGHTS (SECOND PLOT BELOW)
+hist(E(g)$weight[E(g)$weight <quantile(E(g)$weight,0.99)], 
+     breaks = 200,
+     col = "SkyBlue2",
+     xlab = "EDGE WEIGHT", 
+     main = "EDGE WEIGHT DISTRIBUTION FOR ISIS TWEET ASSOCIATION NETWORK
+(WITH TOP 1% EDGE WEIGHTS REMOVED)")
+text(20,200, "   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   0.00    1.61    4.97    8.23   11.58  179.20 ",font=2, cex = 1.8, col="darkgreen")
+
+```
+
+We will later look at further statistics as we dig deeper into the network structure.
+
+
+ISIS TWEET NETWORK VISUALIZATIONS
+
+We visualize the network under different filtrations by weighted degree.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+
+#
+#
+#
+#
+#
+#
+#
+# GRAPH ANALYSIS: FILTER AND VISUALIZE NETWORK
+#
+#
+#
+#
+#
+#
+#
+
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.5)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.8)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = 0.07*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+par(mfrow=c(2,2))
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 75% PERCENTILE
+cut75 <- quantile(as.vector(edgem),0.75)
+g_f <- filter(cutoff = cut75,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.06*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.9)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.3,
+     vertex.label.dist = 0.6,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "ISIS TWEET NETWORK WITH 75.0% FILTRATION")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 85% PERCENTILE
+cut85 <- quantile(as.vector(edgem),0.85)
+g_f <- filter(cutoff = cut85,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.06*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.9)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.3,
+     vertex.label.dist = 0.6,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "ISIS TWEET NETWORK WITH 85.0% FILTRATION")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 95% PERCENTILE
+cut95 <- quantile(as.vector(edgem),0.95)
+g_f <- filter(cutoff = cut95,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.07*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.8)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.5,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+main = "ISIS TWEET NETWORK WITH 95.0% FILTRATION")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 98% PERCENTILE
+cut98 <- quantile(as.vector(edgem),0.98)
+g_f <- filter(cutoff = cut98,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.09*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.8)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.7,
+     vertex.label.dist = 0.6,
+     edge.width = 0.07*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+main = "ISIS TWEET NETWORK WITH 98.0% FILTRATION")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+```
+
+We clearly notice a certain group of usernames which is dominant in the weighted association sense: their network is large and their associations are strong. We will perform some centrality analysis (reproducing some of the initial plots for the particular filtration here) to further look at the structural dominance of the suernames.
+
+
+NETWORK ANALYSIS AND DOMINANT USERNAMES: CENTRALITY MEASURES
+
+We first note that both degree and weighted degree seem good differentiators for the top usernames
+with the weighted degree being mroe sensitive (larger variation in node size) as compared to the degree itself.
+ 
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# BUILD THE ISIS TWEET NETWORK
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# DEGREE AND WEIGHTED DISTRIBUTION:
+# DEGREE IS NOT A GOOD DIFFERENTIATOR
+# WIEGHTED DEGREE IS
+par(mfrow=c(2,2))
+plot(sort(degree(g)),
+     pch = 20,
+     col = "SkyBlue2",
+     xlab = "",
+     ylab = "",
+     main = "",
+     axes = FALSE)
+par(new=T)
+plot(sort(degree(g_f)),
+     pch = 20,
+     col = "red",
+     xlab = "USERNAME INDEX",
+     ylab = "DEGREE VALUE",
+     main = "DEGREE DISTRIBUTIONS FOR THE
+UNFILTERED AND FILTERED TWEET NETWORK")
+text(18,45,"DEGREE DISTRIBUTION:", col = "SkyBlue2", cex = 1.2)
+text(18,39,"   Min. 1st Qu.    Med    Mean 3rd Qu.  Max. 
+  0.0      2.0    12.0    13.5    21.8    48.0 ", col = "SkyBlue2", cex = 1.1)
+text(33,14,"FILTERED DEGREE DISTRIBUTION:", col = "red", cex = 1)
+text(32,8,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    1.0    17.0    28.0    27.5    40.0    52.0 ", col = "red", cex = 1.1)
+legend("topleft",
+       c("Unfiltered Network","Filtered Network"),
+       fill = c("SkyBlue2","red"),
+       bty = "n")
+
+plot(sort(graph.strength(g)),
+     pch = 20,
+     col = "blue",
+     xlab = "USERNAME INDEX",
+     ylab = "DEGREE VALUE",
+     main = "WEIGHTED DEGREE DISTRIBUTION FOR THE
+ISIS TWEET ASSOCIATION NETWORK")
+text(25,500,"WEIGHTED DEGREE:", col = "blue", cex = 1.5)
+text(25,400,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   0.00   11.16   73.91  105.60  163.30  585.40 ", col = "blue", cex = 1.3)
+
+# LET'S VISUALIZE THE TOP FEW USERNAMES
+# USING THE DEGREE AS A NODE SIZE
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 75% PERCENTILE
+cut75 <- quantile(as.vector(edgem),0.75)
+g_f <- filter(cutoff = cut75,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.9*(degree(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (degree(g_f)[k]<quantile(degree(g_f),0.9)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.6,
+     edge.width = 0.04*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "75.0% FILTRATION OF ISIS TWEET NETWORK
+WITH DEGREE AS EDGE SIZE")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+
+# USING WEIGHTED DEGREE AS NODE SIZE
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 75% PERCENTILE
+cut75 <- quantile(as.vector(edgem),0.75)
+g_f <- filter(cutoff = cut75,
+              edge_matrix = edgem,
+              vertex_colors = rep("blue",length(V(g))),
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.07*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.9)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.6,
+     edge.width = 0.04*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "75.0% FILTRATION OF ISIS TWEET NETWORK
+WEIGHTED DEGREE AS EDGE SIZE")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+```
+
+
+SOME MORE CENTRALITY MEASURES: We filtered some less-influencial usernames at the beginning so we reproduce some of the analysis here with the existing dataset.
+
+BEtweenness centrality adn edge-betweenness centrality are both very rigid measures for very dense networks, whcih is what the original network is. In it, only the top few usernames stand out as outliers for both measures, ther est are nearly equal. Closeness centrality on the other hand is a very strong differentiator, mostly since the paths are weighted paths. Eigenvector centrality is also strong, and local clustering is included to comapre the results of the centrality measures.
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+par(mfrow=c(2,2))
+plot(sort(edge.betweenness(g_f)),
+     pch = 20,
+     axes = FALSE,
+     col = "blue",
+     xlab = "",
+     ylab = "",
+     main = "")
+par(new=T)
+plot(sort(betweenness(g_f,v = V(g_f),directed = FALSE,weights = E(g_f)$weight)),
+     pch = 20,
+     col = "red",
+     xlab = "USERNAME INDEX",
+     ylab = "BETWEENNESS CENTRALITY VALUE",
+     main = "BETWEENNESS AND EDGE-BETWEENNESS
+CENTRALITY FOR THE FILTERED ISIS TWEET NETWORK")
+text(26,240,"BETWEENESS CENTRALITY:", col = "red", cex = 1.3)
+text(26,200,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    0.0     5.0    10.0    16.1    20.0   109.0 ", col = "red", cex = 1.1)
+text(24,160,"EDGE - BETWEENESS CENTRALITY:", col = "blue", cex = 1.3)
+text(24,130,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    0.0     1.0     1.0     3.1     3.0    52.0 ", col = "blue", cex = 1.1)
+legend("topleft",
+       c("Betweenness Centrality","Edge-Betweenness Centrality"),
+       fill = c("red","blue"),
+       bty = "n")
+
+plot(sort(closeness(graph = g,weights = E(g)$weight)),
+     pch = 20,
+     col = "darkblue",
+     xlab = "USERNAME INDEX",
+     ylab = "CLOSENESS CENTRALITY VALUE",
+     main = "CLOSENESS CENTRALITY DISTRIBUTION FOR THE
+WEIGHTED ISIS TWEET ASSOCIATION NETWORK")
+text(27,0.031,"CLOSENESS CENTRALITY:", col = "darkblue", cex = 1.3)
+text(26,0.028,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  0.010   0.016   0.019   0.019   0.022   0.035 ", col = "darkblue", cex = 1.1)
+
+plot(sort(evcent(graph = g,weights = E(g)$weight)$vector),
+     pch = 20,
+     col = "purple",
+     xlab = "USERNAME INDEX",
+     ylab = "EIGENVECTOR CENTRALITY VALUE",
+     main = "EIGENVECTOR CENTRALITY DISTRIBUTION
+FOR THE ISIS TWEET ASSOCIATION NETWORK")
+text(26,0.9,"EIGENVECTOR CENTRALITY:", col = "purple", cex = 1.3)
+text(26,0.77,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  0.045   0.224   0.299   0.346   0.433   1.000 ", col = "purple", cex = 1.1)
+
+plot(sort(transitivity(g_f,type = "local")),
+     pch = 20,
+     col = "brown",
+     xlab = "USERNAME INDEX",
+     ylab = "CLUSTERING COEFFICIENT VALUE",
+     main = "CLUSTERING COEFFICIENT DISTRIBUTION
+FOR THE FILTERED ISIS TWEETS NETWORK")
+text(25,0.62,"CLUSTERING COEFFICIENT:", col = "brown", cex = 1.2)
+text(25,0.55,"   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    0.5     0.7     0.9     0.9     1.0     1.0 ", col = "brown", cex = 1.1)
+
+
+
+```
+
+CENTRALITY HEAT MAPS OF THE ISIS TWEET NETWORK
+
+
+HEAT MAP ACCORDING OT EIGENVECTOR CENTRALITY: Eigenvector centrality (also called eigencentrality) is a measure of the influence of a node in a network. It assigns relative scores to all nodes in the network based on the concept that connections to high-scoring nodes contribute more to the score of the node in question than equal connections to low-scoring nodes. Google's PageRank is a variant of the eigenvector centrality measure.[24] Another closely related centrality measure is Katz centrality.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 85% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.5)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.85)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# GET EIGENVECTOR CENTRALITY VALUES
+evc <- evcent(graph = g_f)$vector
+evc1 <- 1000*(evc)
+
+# PLOT HEAT MAP ON VERTICES ACCORDING TO EIGENVECTOR CENTRALITY SCORE
+for (k in 1:length(evc1)){
+  V(g_f)$color[k] <- rev(heat.colors(1+max(as.integer(evc1))))[1+as.integer(evc1[k])]
+}
+
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = 0.07*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND NODE HEAT COLOR ACCORDING TO EIGENVECTOR CENTRALITY")
+```
+
+HEAT MAP ACCORDING OT BETWEENNESS CENTRALITY: Betweenness Centrality computes node's centrality in a network. It is equal to the number of shortest paths from all nodes to all others that pass through that node. It is particularly useful for network analysis and for capturing information flow and influence. Note that betweenness centrality reveals a different dominating group than the weighted degree. That is, the weighted degree really shows connections by vliume and activity but the betweenness centrality captures secondary connection and semi-global impact. The node size is computed in terms of the weighted degree.
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.5)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.85)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+# GET BETWEENNESS CENTRALITY VALUES
+btw <- betweenness(graph = g_f,
+                  v = V(g_f),
+                  directed = FALSE,
+                  weights = E(g_f)$weight)
+btw1 <- 2*sqrt(btw)
+
+# PLOT HEAT MAP ON VERTICES ACCORDING TO BETWEENNESS CENTRALITY SCORE
+for (k in 1:length(btw1)){
+  V(g_f)$color[k] <- rev(heat.colors(1+max(as.integer(btw1))))[1+as.integer(btw1[k])]
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = 0.07*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND NODE HEAT COLOR ACCORDING TO BETWEENNESS CENTRALITY")
+```
+
+
+HEAT MAP ACCORDING OT CLOSENESS CENTRALITY: In connected graphs there is a natural distance metric between all pairs of nodes, defined by the length of their shortest paths. The farness of a node is defined as the sum of its distances from all other nodes, and its closeness is defined as the reciprocal of the farness, that is the more central a node is the lower its total distance from all other nodes. We see a consistency with most of the more influential nodes whose closeness is very low indicating they are clsoe to most of the other nodes, hence influencing them more.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.5)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.85)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+
+# GET CLOSENESS CENTRALITY VALUES
+cls <- closeness(graph = g_f,
+                  vids = V(g_f))
+cls1 <- (3000*(cls-min(cls)))^2
+
+# PLOT HEAT MAP ON VERTICES ACCORDING TO CLOSENESS CENTRALITY SCORE
+for (k in 1:length(cls1)){
+  V(g_f)$color[k] <- rev(heat.colors(1+max(as.integer(cls1))))[1+as.integer(cls1[k])]
+}
+
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = V(g_f)$color,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = 0.07*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND NODE HEAT COLOR ACCORDING TO CLOSENESS CENTRALITY")
+```
+
+COMMUNITY STRUCTURES FOR THE WEIGHTED ISIS TWEET ASSOCIATION NETWORK
+NEEDS FURTHER INVESTIGATION INTO THE PERSISTENCE
+OF CLUSTERING THROUGHOUT THE FILTRATION
+
+
+SPINGLASS COMMUNITY: Spinglass Community is an approach from statistical physics, based on the so-called Potts model. In this model, each particle (i.e. vertex) can be in one of c spin states, and the interactions between the particles (i.e. the edges of the graph) specify which pairs of vertices would prefer to stay in the same spin state and which ones prefer to have different spin states. The model is then simulated for a given number of steps, and the spin states of the particles in the end define the communities. 
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+
+# DEFINE THE SPINGLASS COMMUNITY STRUCTURE
+sp <- spinglass.community(graph = g_f)
+
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+vg_f_name <- V(g_f)$name
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.8)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+```
+
+We plot the network view, as well as a wordcloud view of the usernames with size of letters corresponding to weighted degree, and color showing the clusters according to spinglass community.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = sp$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION
+AND COLORS DENOTING SPINGLASS COMMUNITIES")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+# SPINGLASS WORDCLOUD
+sp_mem <- sp$membership
+sp_lbl <- vg_f_name
+spin <- cbind.data.frame(sp_mem,sp_lbl)
+cat("Largest Spinglass Community Clusters:")
+strength_fr <- cbind.data.frame(graph.strength(g_f),vg_f_name)
+cluster1 <- as.character(spin[spin$sp_mem==1,2])
+cluster2 <- as.character(spin[spin$sp_mem==2,2])
+# wordcloud(cluster1,strength_fr[strength_fr[,2] %in% cluster1,1],random.order = FALSE, colors = )
+# wordcloud(cluster2,strength_fr[strength_fr[,2] %in% cluster2,1])
+colorlist <- c(rep("red",length(cluster1)),rep("blue", length(cluster2)))
+wordcloud(c(cluster1,cluster2),
+          c(strength_fr[strength_fr[,2] %in% cluster1,1],strength_fr[strength_fr[,2] %in% cluster2,1]),
+          scale = c(7,0.1),
+          colors = colorlist,
+          ordered.colors = TRUE,
+          random.order = FALSE,
+          rot.per = 0.25,
+          random.color = FALSE)
+```
+
+
+WALKTRAP COMMUNITY DETECTION: This is an approach based on random walks. The general idea is that if you perform random walks on the graph,then the walks are more likely to stay within the same community because there are only a few edges that lead outside a given community. Walktrap uses the results of the random walks to merge separate communities in a bottom-up manner. 
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 65% PERCENTILE
+cut65 <- quantile(as.vector(edgem),0.65)
+g_f <- filter(cutoff = cut65,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.05*(graph.strength(g_f))
+
+# DEFINE THE WALKTRAP COMMUNITY STRUCTURE
+wk <- walktrap.community(graph = g_f,
+                         membership = TRUE,
+                         weights = E(g_f)$weights)
+
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+vg_f_name <- V(g_f)$name
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.85)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+```
+
+We plot the network view, as well as a wordcloud view of the usernames with size of letters corresponding to weighted degree, and color showing the clusters according to walktrap community.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = wk$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "ISIS TWEET ASSOCIATION NETWORK WITH 65.0% FILTRATION 
+AND CLUSTERING ACCORDING TO WALKTRAP COMMUNITY")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+# WALKTRAP WORDCLOUD
+wk_mem <- wk$membership
+wk_lbl <- vg_f_name
+walk <- cbind.data.frame(wk_mem,wk_lbl)
+cat("Largest Walktrap Community Clusters:")
+strength_fr <- cbind.data.frame(graph.strength(g_f),vg_f_name)
+cluster1 <- as.character(walk[walk$wk_mem %in% 1,2])
+cluster2 <- as.character(walk[walk$wk_mem %in% 2,2])
+# wordcloud(cluster1,strength_fr[strength_fr[,2] %in% cluster1,1],random.order = FALSE, colors = )
+# wordcloud(cluster2,strength_fr[strength_fr[,2] %in% cluster2,1])
+colorlist <- c(rep("orange",length(cluster1)),rep("brown", length(cluster2)))
+wordcloud(c(cluster1,cluster2),
+          c(strength_fr[strength_fr[,2] %in% cluster1,1],strength_fr[strength_fr[,2] %in% cluster2,1]),
+          scale = c(7,0.1),
+          colors = colorlist,
+          ordered.colors = TRUE,
+          random.order = FALSE,
+          rot.per = 0.25,
+          random.color = FALSE)
+
+```
+
+FASTGREEDY COMMUNITY DETECTION: This is another hierarchical bottom-up approach. It optimizes the modularity in a greedy manner. Initially, every vertex belongs to a separate community, and communities are merged iteratively such that each merge is locally optimal (i.e. yields the largest increase in the current value of modularity). The algorithm stops when it is not possible to increase the modularity any more, so it gives you a grouping as well as a dendrogram. The method is fast and it is the method that is usually tried as a first approximation because it has no parameters to tune.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+# g_f <- giant_comp(graph = g_f,
+#                   vertex_colors = V(g_f)$color,
+#                   vertex_names = V(g_f)$name,
+#                   vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# DEFINE THE FASTGREEDY COMMUNITY STRUCTURE
+fg <- fastgreedy.community(graph = as.undirected(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+vg_f_name <- V(g_f)$name
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.85)){
+    V(g_f)$name[k] <- NA
+  }
+}
+```
+
+We plot the network view, as well as a wordcloud view of the usernames with size of letters corresponding to weighted degree, and color showing the clusters according to fastgreedy community.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# PLOT THE NETWORK
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = fg$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND CLUSTERING ACCORDING TO FASTGREEDY COMMUNITY")
+legend("topleft",
+       "TWEETER USERNAME",
+       fill = "SkyBlue2",
+       bty = "n")
+
+# FASTGREEDY WORDCLOUND
+fg_mem <- fg$membership
+fg_lbl <- vg_f_name
+fast <- cbind.data.frame(fg_mem,fg_lbl)
+strength_fr <- cbind.data.frame(graph.strength(g_f),vg_f_name)
+cluster1 <- as.character(fast[fast$fg_mem %in% 1,2])
+cluster2 <- as.character(fast[fast$fg_mem %in% 2,2])
+# wordcloud(cluster1,strength_fr[strength_fr[,2] %in% cluster1,1],random.order = FALSE, colors = )
+# wordcloud(cluster2,strength_fr[strength_fr[,2] %in% cluster2,1])
+colorlist <- c(rep("green",length(cluster1)),rep("purple", length(cluster2)))
+wordcloud(c(cluster1,cluster2),
+          c(strength_fr[strength_fr[,2] %in% cluster1,1],strength_fr[strength_fr[,2] %in% cluster2,1]),
+          scale = c(7,0.1),
+          colors = colorlist,
+          ordered.colors = TRUE,
+          random.order = FALSE,
+          rot.per = 0.25,
+          random.color = FALSE)
+```
+
+
+LEADING EIGENVECTOR COMMUNITY DETECTION: is a top-down hierarchical approach that optimizes the modularity function again. In each step, the graph is split into two parts in a way that the separation itself yields a significant increase in the modularity. The split is determined by evaluating the leading eigenvector of the so-called modularity matrix, and there is also a stopping condition which prevents tightly connected groups to be split further.
+
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+g_f <- giant_comp(graph = g_f,
+                  vertex_colors = V(g_f)$color,
+                  vertex_names = V(g_f)$name,
+                  vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.05*(graph.strength(g_f))
+
+# DEFINE THE LEADING EIGENVECTOR COMMUNITY STRUCTURE
+le <- leading.eigenvector.community(g_f)
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.9)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+```
+
+We plot the network view, as well as a wordcloud view of the usernames with size of letters corresponding to weighted degree, and color showing the clusters according to leading eigenvector community.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# PLOT THE LEADING EIGENVECTOR COMMUNITIES
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = le$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND CLUSTERING ACCORDING TO THE LEADING EIGENVECTOR COMMUNITY")
+
+# LEADING EIGENVECTOR WORDCLOUND
+le_mem <- le$membership
+le_lbl <- vg_f_name
+leadin <- cbind.data.frame(le_mem,le_lbl)
+strength_fr <- cbind.data.frame(graph.strength(g_f),vg_f_name)
+cluster1 <- as.character(leadin[leadin$le_mem %in% 1,2])
+cluster2 <- as.character(leadin[leadin$le_mem %in% 2,2])
+# wordcloud(cluster1,strength_fr[strength_fr[,2] %in% cluster1,1],random.order = FALSE, colors = )
+# wordcloud(cluster2,strength_fr[strength_fr[,2] %in% cluster2,1])
+colorlist <- c(rep("lightgreen",length(cluster1)),rep("brown", length(cluster2)))
+wordcloud(c(cluster1,cluster2),
+          c(strength_fr[strength_fr[,2] %in% cluster1,1],strength_fr[strength_fr[,2] %in% cluster2,1]),
+          scale = c(6,0.1),
+          colors = colorlist,
+          ordered.colors = TRUE,
+          random.order = FALSE,
+          rot.per = 0.25,
+          random.color = FALSE)
+
+```
+
+MULTILEVEL COMMUNITY DETECTION: Multilevel community detection is based on the following approach. Assume that we start with a weighted network of N nodes. First, we assign a different community to each node 
+of the network. So, in this initial partition there are as many communities as there are nodes. Then, for each node i we consider the neighbours j of i and we evaluate the gain of modularity that would take place by removing i from its community and by placing it in the community of j. The node i is then placed in the community for which this gain is maximum (in case of a tie we use a breaking rule), but only if this gain is positive. If no positive gain is possible, i stays in its original community. This process is applied repeatedly and sequentially for all nodes until no further improvement can be achieved. Note that a node may be, and often is, considered several times. Also, the output of the algorithm depends on the order in which the nodes are considered, although it can be shown that the order has little effect.
+
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# FITLER TO THE GIANT COMPONENT
+g_f <- giant_comp(graph = g_f,
+                  vertex_colors = V(g_f)$color,
+                  vertex_names = V(g_f)$name,
+                  vertex_size = V(g_f)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+
+# DEFINE THE MULTILEVEL COMMUNITY STRUCTURE
+ml <- multilevel.community(graph = as.undirected(g_f))
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.93)){
+    V(g_f)$name[k] <- NA
+  }
+}
+```
+
+We plot the network view, as well as a wordcloud view of the usernames with size of letters corresponding to weighted degree, and color showing the clusters according to fastgreedy community.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# PLOT THE MULTILEVEL COMMUNITIES
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = ml$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND CLUSTERING ACCORDING TO THE MULTILEVEL COMMUNITY")
+
+# MULTILEVEL COMMUNITY WORDCLOUND
+ml_mem <- ml$membership
+ml_lbl <- vg_f_name
+mult <- cbind.data.frame(ml_mem,ml_lbl)
+strength_fr <- cbind.data.frame(graph.strength(g_f),vg_f_name)
+cluster1 <- as.character(mult[mult$ml_mem %in% 1,2])
+cluster2 <- as.character(mult[mult$ml_mem %in% 2,2])
+# wordcloud(cluster1,strength_fr[strength_fr[,2] %in% cluster1,1],random.order = FALSE, colors = )
+# wordcloud(cluster2,strength_fr[strength_fr[,2] %in% cluster2,1])
+colorlist <- c(rep("lightblue",length(cluster1)),rep("darkred", length(cluster2)))
+wordcloud(c(cluster1,cluster2),
+          c(strength_fr[strength_fr[,2] %in% cluster1,1],strength_fr[strength_fr[,2] %in% cluster2,1]),
+          scale = c(6,0.1),
+          colors = colorlist,
+          ordered.colors = TRUE,
+          random.order = FALSE,
+          rot.per = 0.25,
+          random.color = FALSE)
+
+```
+
+EDGE-BETWEENNESS COMMUNITY is a hierarchical decomposition process where edges are removed in the decreasing order of their edge betweenness scores (i.e. the number of shortest paths that pass through a given edge). This is motivated by the fact that edges connecting different groups are more likely to be contained in multiple shortest paths simply because in many cases they are the only option to go from one group to another. This method yields good results but is very slow because of the computational complexity of edge betweenness calculations and because the betweenness scores have to be re-calculated after every edge removal. 
+
+
+We see that edge-betweenness community detection is not useful, it yeilds a single community that persists through the filtration of edge weight values. Due to high density of the graph, the number of shortest paths through each vertex is the same
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# ISIS TWEET ASSOCIATION NETWORK, FILTERED BY 50% PERCENTILE
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- graph.strength(g)
+V(g)$name <- as.character(usernames)
+
+cut50 <- quantile(as.vector(edgem),0.50)
+g_f <- filter(cutoff = cut50,
+              edge_matrix = edgem,
+              vertex_colors = V(g)$color,
+              vertex_names = V(g)$name,
+              vertex_size = V(g)$size)
+
+# ADJUST THE NODE SIZE
+V(g_f)$size <- 0.04*(graph.strength(g_f))
+
+# DEFINE THE EDGE-BETWEENNESS COMMUNITY STRUCTURE
+eb <- edge.betweenness.community(graph = g_f,weights = E(g_f)$weights,directed = FALSE)
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g_f)){
+  if (graph.strength(g_f)[k]<quantile(graph.strength(g_f),0.93)){
+    V(g_f)$name[k] <- NA
+  }
+}
+
+
+# PLOT THE EDGE-BETWEENNESS COMMUNITIES
+plot(g_f,
+     layout = layout.sphere(g_f),
+     vertex.color = eb$membership,
+     vertex.size = V(g_f)$size,
+     vertex.label = V(g_f)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.1,
+     vertex.label.dist = 0.5,
+     edge.width = 0.05*(E(g_f)$weight),
+     edge.curved = TRUE,
+     edge.color = gray.colors(1),
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK WITH 50.0% FILTRATION 
+AND CLUSTERING ACCORDING TO THE EDGE-BETWEENNESS COMMUNITY")
+```
+
+LABEL PROPAGATION COMMUNITY (or connected component detection) is a simple approach in which every node is assigned one of k labels. The method then proceeds iteratively and re-assigns labels to nodes in a way that each node takes the most frequent label of its neighbors in a synchronous manner. The method stops when the label of each node is one of the most frequent labels in its neighborhood. It is very fast but yields different results based on the initial configuration (which is decided randomly), therefore one should run the method a large number of times (say, 1000 times for a graph) to allow it to converge. In our case, the method produced a single cluster as the graph is heavily connected through most of the filtration.
+
+
+DIAMETER OF THE NETWORK: The Diameter of a network is defined as the longest path, in our case the largest weighted sum of edges. We consider a path as the weighted sum of paths. For the definition of a weigthed path, we take the sum of the weights of each of the edges along the path. 
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# BUILD THE ISIS TWEET NETWORK
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$name <- as.character(usernames)
+d_i <- get.diameter(g)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)[d_i]$color <- rep("red",length(d_i))
+V(g)$size <- 0.7*sqrt(100+graph.strength(g))
+E(g)$color <- gray.colors(1)
+E(g, path = d_i)$color <- rep("red",length(d_i))
+E(g)$width = 0.02*E(g)$weight
+E(g, path = d_i)$width <- 2
+
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g)){
+  if (graph.strength(g)[k]<quantile(graph.strength(g),0.85)){
+    V(g)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g,
+     layout = layout.sphere(g),
+     vertex.color = V(g)$color,
+     vertex.size = V(g)$size,
+     vertex.label = V(g)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = E(g)$width,
+     edge.curved = TRUE,
+     edge.color = E(g)$color,
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK
+WITH WEIGHTED DIAMETER OF NETWORK IN RED COLOR")
+
+```
+
+In our case, we see that without any filtration, due to the density of the network, diameter is not very useful. We will need to filter out the menaningless connections and then re-evaluate diameter. Some filtration increases the length of the diameter, demonstrating the essential conenctions.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+# BUILD THE ISIS TWEET NETWORK
+cutt <- quantile(as.vector(edgem),0.75)
+edgem2 <- edgem
+edgem2[edgem2 < cutt] <- 0
+g <- graph.adjacency(adjmatrix = edgem2, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$name <- as.character(usernames)
+d_i <- get.diameter(g)
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)[d_i]$color <- rep("red",length(d_i))
+V(g)$size <- 0.5*sqrt(100+graph.strength(g))
+E(g)$color <- gray.colors(1)
+E(g, path = d_i)$color <- rep("red",length(d_i))
+E(g)$width = 0.02*E(g)$weight
+E(g, path = d_i)$width <- 2
+
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g)){
+  if (graph.strength(g)[k]<quantile(graph.strength(g),0.85)){
+    V(g)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g,
+     layout = layout.sphere(g),
+     vertex.color = V(g)$color,
+     vertex.size = V(g)$size,
+     vertex.label = V(g)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = E(g)$width,
+     edge.curved = TRUE,
+     edge.color = E(g)$color,
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK
+WITH WEIGHTED DIAMETER OF NETWORK IN RED COLOR")
+```
+
+MINIMUM WEIGHT SPANNING TREE: This is the minimum number of edges that we can keep so that connected components are preserved, vertices are preserved, and the weight is minimized. This can be useful in order to show us the most essential shared trade areas and their adjacent stores. We observe that most of the edges are needed in order to preserve the connectivity of the graph. The real power of this tool comes in when we have higher connectivity and essential features (the "spine of the graph") need to be detected. We will use g400 and g1000 to illustrate the concept.
+
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=12,dpi=150,out.width='1200px',out.height='1200px'}
+
+# SET UP 50% FILTRATION
+cutt <- quantile(as.vector(edgem),0.5)
+edgem2 <- edgem
+edgem2[edgem2 < cutt] <- 0
+g <- graph.adjacency(adjmatrix = edgem2, 
+                     mode = "undirected",
+                     weighted = TRUE)
+V(g)$name <- as.character(usernames)
+E(g)$id<-seq_len(ecount(g))
+mst<-minimum.spanning.tree(g)
+E(g)$color <- gray.colors(1)
+E(g)$color[E(mst)$id]<-"red"
+V(g)$color <- rep("SkyBlue2",length(V(g)))
+V(g)$size <- 0.5*sqrt(100+graph.strength(g))
+E(g)$width = 0.02*E(g)$weight
+E(g)$width[E(mst)$id] <- 1
+
+
+# FILTER LABELS TO THE HIGHEST WEIGHTED DEGREE NODES
+for (k in 1:vcount(g)){
+  if (graph.strength(g)[k]<quantile(graph.strength(g),0.85)){
+    V(g)$name[k] <- NA
+  }
+}
+
+# PLOT THE NETWORK
+plot(g,
+     layout = layout.sphere(g),
+     vertex.color = V(g)$color,
+     vertex.size = V(g)$size,
+     vertex.label = V(g)$name, 
+     vertex.label.color = "red", 
+     vertex.label.font = 2, 
+     vertex.label.cex = 1.2,
+     vertex.label.dist = 0.5,
+     edge.width = E(g)$width,
+     edge.curved = TRUE,
+     edge.color = E(g)$color,
+     main = "WEIGHTED ISIS TWEET ASSOCIATION NETWORK
+WITH MINIMUM SPANNING TREE IN RED COLOR")
+
+```
+
+PATH DISTRIBUTION: This shows the different lengths of shortest paths (geodesics) in our network. The following square matrix describes all possible paths, giving value "Inf" to the ones across separate components (they are considered infinite or nonexistant). As the path length distribution shows, we have a highly connected, highly traversible network. For this discussion, we will consider the weighted network.
+```{r, echo=FALSE,results='markup',warning=FALSE,message=FALSE,fig.width=12,fig.height=8,dpi=150,out.width='1200px',out.height='800px'}
+cutt <- quantile(as.vector(edgem),0.05)
+edgem2 <- edgem
+edgem2[edgem2 < cutt] <- 0
+g <- graph.adjacency(adjmatrix = edgem, 
+                     mode = "undirected",
+                     weighted = TRUE)
+sh <- shortest.paths(g)
+is.na(sh)<-sapply(sh,is.infinite)
+paths <- na.omit(as.vector(sh))
+cat("Number of total paths")
+length(paths)
+cat("Summary of path statistics for the unfiltered weighted network.")
+summary(paths)
+par(mfrow=c(1,2))
+plot(sort(paths),
+     xlab = "PATH INDEX",
+     ylab = "WEIGHTED PATH LENGTH",
+     main = "TWEET NETWORK PATHS (SORTED)",
+     pch = 20,
+     col = adjustcolor(rgb(0,0,1,1)))
+hist(paths,
+     breaks = 70,
+     col = "blue",
+     xlab = "PATH LENGTH VALUES",
+     main = "PATH LENGTH DISTRIBUTION 
+FOR THE TWEET NETWORK")
+```
